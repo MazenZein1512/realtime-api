@@ -1,0 +1,6 @@
+torch==2.4.1
+torchaudio==2.4.1
+torchvision==2.4.1
+soundfile==0.12.1
+ffmpeg==1.4
+pydup==0.25.1

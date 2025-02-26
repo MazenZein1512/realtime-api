@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Stream</title>
+</head>
+<body>
+    <h1>Audio Stream</h1>
+    <button id="start">Start Recording</button>
+    <button id="stop">Stop Recording</button>
+    <a id="downloadLink" href="#" download="recorded_audio.ogg" style="display:none;">Download Recorded Audio</a>
+    <audio id="audioPlayback" controls></audio>
+
+    <script>
+        const socket = new WebSocket('ws://localhost:8000/ws/audio/');
+
+        socket.onopen = function(e) {
+            console.log('Connection established');
+        };
+
+        socket.onmessage = function(event) {
+            if (typeof event.data === 'string') {
+                const data = JSON.parse(event.data);
+                console.log('Message from server: ', data);
+
+                if (data.transcription) {
+                    console.log('Transcription: ', data.transcription);
+                }
+            } else {
+                console.log('Binary data received from server');
+                audioChunks.push(event.data);
+
+                if (audioChunks.length > 1) {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/ogg' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audioPlayback = document.getElementById('audioPlayback');
+                    audioPlayback.src = audioUrl;
+                    audioPlayback.load();
+                    audioPlayback.play().catch(error => {
+                        console.error('Error playing audio: ', error);
+                    });
+                    console.log('Audio playback updated');
+                }
+            }
+        };
+
+        socket.onerror = function(error) {
+            console.error('WebSocket Error: ', error);
+        };
+
+        socket.onclose = function(event) {
+            console.log('WebSocket connection closed: ', event);
+        };
+
+        const startButton = document.getElementById('start');
+        const stopButton = document.getElementById('stop');
+        let mediaRecorder;
+        let audioChunks = [];
+        let mimeType;
+        let recordingInterval;
+
+        startButton.addEventListener('click', () => {
+            console.log('Start Recording button clicked');
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    console.log('Media stream obtained');
+
+                    // Check MIME type support
+                    if (MediaRecorder.isTypeSupported('audio/ogg')) {
+                        mimeType = 'audio/ogg';
+                    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                        mimeType = 'audio/webm';
+                    } else {
+                        throw new Error('No supported MIME type found for MediaRecorder');
+                    }
+
+                    console.log('Using MIME type:', mimeType);
+                    mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+                    mediaRecorder.ondataavailable = function(e) {
+                        console.log('Data available: ', e.data);
+                        audioChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstart = function() {
+                        console.log('MediaRecorder started');
+                        recordingInterval = setInterval(() => {
+                            if (audioChunks.length > 0) {
+                                const audioBlob = new Blob(audioChunks, { type: mimeType });
+                                socket.send(audioBlob);
+                                audioChunks = [];
+                            }
+                        }, 2000); // Send audio data every 2 seconds
+                    };
+
+                    mediaRecorder.onstop = function() {
+                        console.log('MediaRecorder stopped');
+                        clearInterval(recordingInterval);
+                    };
+
+                    mediaRecorder.start(100);
+                })
+                .catch(error => {
+                    console.error('Error accessing media devices.', error);
+                });
+        });
+
+        stopButton.addEventListener('click', () => {
+            console.log('Stop Recording button clicked');
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+        });
+    </script>
+</body>
+</html>

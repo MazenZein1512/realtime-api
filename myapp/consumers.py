@@ -9,21 +9,30 @@ from django.core.files.storage import default_storage
 import numpy as np
 import io
 import torchaudio
+import random
+import torch
 
 import transformers
+import multiprocessing
 from transformers import WhisperFeatureExtractor, WhisperTokenizer, WhisperProcessor, WhisperForConditionalGeneration, EncoderDecoderCache
 
 logger = logging.getLogger(__name__)
 
-SAMPLING_RATE = 16000   # Whisper expects audio at 16 kHz
+DATASET_PATH = "/kaggle/input/quran-ayat-speech-to-text"
+df_PATH = DATASET_PATH + "/Quran_Ayat_public/transcripts.tsv"
+AUDIO_DATA = DATASET_PATH +  "/Quran_Ayat_public/audio_data"
+SAMPLING_RATE = 16000
+output_dir = "./Graduation_Project_Whisper_base"
+STEP = 800
+num_workers = multiprocessing.cpu_count()
+# model_name = "openai/whisper-base"
 model_name = "YoussefAshmawy/Graduation_Project_Whisper_base"
-feature_extractor = WhisperFeatureExtractor.from_pretrained(model_name)
-tokenizer = WhisperTokenizer.from_pretrained(model_name, language="ar", task="transcribe")
-model = WhisperForConditionalGeneration.from_pretrained(model_name)
-processor = WhisperProcessor.from_pretrained(model_name)
-
-forced_decoder_ids = processor.tokenizer.get_decoder_prompt_ids(language="ar", task="transcribe")
-model.config.forced_decoder_ids = forced_decoder_ids
+repo_id = "YoussefAshmawy/Graduation_Project_Whisper_base"
+max_length = 448
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
 
 class AudioConsumer(AsyncWebsocketConsumer):
 
@@ -106,9 +115,14 @@ class AudioConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps(response_data))
 
 
+# Initialize the feature extractor, tokenizer, and model
+feature_extractor = WhisperFeatureExtractor.from_pretrained(model_name)
+tokenizer = WhisperTokenizer.from_pretrained(model_name)
+model = WhisperForConditionalGeneration.from_pretrained(model_name)
+
 def transcribe_audio(waveform):
     """
-    Transcribe a single audio file
+    Transcribe a single audio waveform
     
     Args:
         waveform (torch.Tensor): Audio waveform tensor
@@ -116,6 +130,10 @@ def transcribe_audio(waveform):
     Returns:
         str: Transcribed text
     """
+    # Ensure waveform is in the correct shape
+    if waveform.dim() == 2:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    
     # Extract features
     inputs = feature_extractor(
         waveform.squeeze().numpy(), 
@@ -126,10 +144,9 @@ def transcribe_audio(waveform):
     # Generate transcription
     generated_ids = model.generate(
         inputs.input_features, 
-        max_length=448, 
+        max_length=max_length, 
         num_beams=4, 
         repetition_penalty=1.1,
-        past_key_values=EncoderDecoderCache.from_legacy_cache(None)  # Handle past_key_values deprecation
     )
     
     # Decode transcription
